@@ -1,0 +1,25 @@
+[project]
+name = "mood-maestro"
+version = "0.1.0"
+description = "Personalized and real-time generative playlist curation with AI Agents"
+readme = "README.md"
+authors = [
+    { name = "Satyam Chatrola", email = "sc10247@nyu.edu" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[all]>=0.117.1",
+    "ipykernel>=6.30.1",
+    "openai>=1.109.1",
+    "pandas>=2.3.2",
+    "pymongo>=4.15.1",
+    "ruff>=0.13.2",
+    "sentence-transformers>=5.1.1",
+]
+
+[project.scripts]
+mood-maestro = "mood_maestro:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
