@@ -66,5 +66,15 @@ class TrackDocument(BaseModel):
                     "tempo": 120.0,
                 },
                 "embedding": [0.1, 0.2, 0.3],
+                "skip_count": 3,
+                "finish_count": 34,
+                "liked": True,
+                "cooldown_level": 2,
+                "last_skip_timestamp": 121456782,
             }
         }
+
+
+class Entity(BaseModel):
+    entity_name: str
+    embedding: List[float]

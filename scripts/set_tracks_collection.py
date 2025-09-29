@@ -13,7 +13,7 @@ from scripts.models import TrackAudioFeatures, TrackDocument
 
 
 # Module logger
-logger = logging.getLogger("mood_maestro.set_db")
+logger = logging.getLogger("mood_maestro.set_tracks_collection")
 
 
 def configure_logging_from_env() -> None:
@@ -31,7 +31,7 @@ def get_dataset(file_path: str) -> pd.DataFrame:
 
 
 def pre_process_data(df: pd.DataFrame) -> pd.DataFrame:
-    df.dropna(subset=['track_id', 'track_name'], inplace=True)
+    df.dropna(subset=["track_id", "track_name"], inplace=True)
     df.drop_duplicates(subset=["track_id"], inplace=True)
     df = df.reset_index(drop=True)
     return df
@@ -134,18 +134,22 @@ def empty_and_populate_collection(
                 # BulkWriteError can occur for duplicate _id or other write errors.
                 # Log and continue if some writes succeeded.
                 logger.warning(
-                    f"BulkWriteError on batch {start + 1}-{end}: {bwe.details}")
+                    f"BulkWriteError on batch {start + 1}-{end}: {bwe.details}"
+                )
                 # If ordered=False some docs may have been written; stop retrying this batch.
                 break
             except (pymongo.errors.AutoReconnect, pymongo.errors.NetworkTimeout) as e:
                 attempt += 1
-                wait = 2 ** attempt
+                wait = 2**attempt
                 logger.warning(
                     f"Transient error on batch {start + 1}-{end} (attempt {attempt}/{max_retries}): {e}. Retrying in {wait}s..."
                 )
                 time.sleep(wait)
             except Exception as e:
-                logger.error(f"Unexpected error uploading batch {start + 1}-{end}: {e}", exc_info=True)
+                logger.error(
+                    f"Unexpected error uploading batch {start + 1}-{end}: {e}",
+                    exc_info=True,
+                )
                 # For unexpected errors, don't retry indefinitely; re-raise after logging.
                 raise
 
@@ -157,7 +161,7 @@ def main() -> None:
 
     DATA_FILE_PATH = os.getenv("DATA_FILE_PATH")
     DB_NAME = os.getenv("DB_NAME")
-    COLLECTION_NAME = os.getenv("COLLECTION_NAME")
+    COLLECTION_NAME = os.getenv("MONGO_TRACKS_COLLECTION")
     EMBEDDING_FEATURES = [
         "duration_ms",
         "danceability",
