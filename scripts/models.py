@@ -27,6 +27,11 @@ class TrackDocument(BaseModel):
     explicit: bool
     audio_features: TrackAudioFeatures
     embedding: List[float]
+    skip_count: int
+    finish_count: int
+    liked: bool
+    cooldown_level: int
+    last_skip_timestamp: int | None
 
     @field_validator("embedding")
     def embedding_must_not_be_empty(cls, v: List[float]):

@@ -1,14 +1,13 @@
 import os
 import pandas as pd
 import numpy as np
-from sentence_transformers import SentenceTransformer
-from sklearn.preprocessing import MinMaxScaler
 import pymongo
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from tqdm import tqdm
 from typing import List, Tuple
 import logging
+import time
 
 from scripts.models import TrackAudioFeatures, TrackDocument
 
@@ -32,41 +31,10 @@ def get_dataset(file_path: str) -> pd.DataFrame:
 
 
 def pre_process_data(df: pd.DataFrame) -> pd.DataFrame:
-    df.dropna(inplace=True)
+    df.dropna(subset=['track_id', 'track_name'], inplace=True)
     df.drop_duplicates(subset=["track_id"], inplace=True)
     df = df.reset_index(drop=True)
     return df
-
-
-def engineer_features(df: pd.DataFrame, numerical_features: list) -> pd.DataFrame:
-    logger.info("Performing feature engineering...")
-    scaler = MinMaxScaler()
-    df[numerical_features] = scaler.fit_transform(df[numerical_features])
-    df["text_features"] = (
-        df["track_name"]
-        + " by "
-        + df["artists"]
-        + " is part of the album "
-        + df["album_name"]
-        + " in the genre "
-        + df["track_genre"]
-    )
-    logger.info("Feature engineering complete.")
-    return df
-
-
-def embed_features(
-    df: pd.DataFrame, numerical_features: list, embedding_model_name: str
-) -> np.ndarray:
-    logger.info(f"Generating embeddings using '{embedding_model_name}'...")
-    model = SentenceTransformer(embedding_model_name)
-    text_embeddings = model.encode(df["text_features"].tolist(), show_progress_bar=True)
-    numerical_data = df[numerical_features].to_numpy()
-    combined_embeddings = np.hstack((text_embeddings, numerical_data))
-    logger.info(
-        f"Embeddings generated. Vector dimension: {combined_embeddings.shape[1]}"
-    )
-    return combined_embeddings
 
 
 def load_env_variables() -> None:
@@ -89,7 +57,7 @@ def connect_to_mongo(
     return client, collection
 
 
-def prepare_documents(df: pd.DataFrame, combined_embeddings: np.ndarray) -> List[dict]:
+def prepare_documents(df: pd.DataFrame, embeddings: np.ndarray) -> List[dict]:
     documents = []
     for index in tqdm(range(len(df)), total=len(df), desc="Preparing Documents"):
         row = df.iloc[index]
@@ -117,10 +85,15 @@ def prepare_documents(df: pd.DataFrame, combined_embeddings: np.ndarray) -> List
                 album_name=row.get("album_name"),
                 track_genre=row.get("track_genre"),
                 popularity=float(row["popularity"]),
-                duration_ms=float(row["duration_ms"]),
+                duration_ms=int(row["duration_ms"]),
                 explicit=bool(row["explicit"]),
                 audio_features=audio,
-                embedding=combined_embeddings[index].tolist(),
+                embedding=embeddings[index].tolist(),
+                skip_count=0,
+                finish_count=0,
+                liked=False,
+                cooldown_level=0,
+                last_skip_timestamp=None,
             )
             documents.append(doc_model.model_dump(by_alias=True))
         except Exception as e:
@@ -132,10 +105,50 @@ def prepare_documents(df: pd.DataFrame, combined_embeddings: np.ndarray) -> List
 def empty_and_populate_collection(
     collection: pymongo.collection.Collection, documents: list
 ) -> None:
-    logger.info(f"Uploading {len(documents)} documents...")
+    """Remove existing documents and upload the provided list in batches.
+
+    Batches are of size 10,000. Each batch uses insert_many with ordered=False
+    for performance and resilience. Retries a few times on transient errors.
+    """
+    batch_size = 50000
+    max_retries = 3
+    logger.info(f"Uploading {len(documents)} documents in batches of {batch_size}...")
+    # Clear collection first
     collection.delete_many({})
-    if documents:
-        collection.insert_many(documents, ordered=True)
+
+    if not documents:
+        logger.info("No documents to upload.")
+        return
+
+    total = len(documents)
+    for start in tqdm(range(0, total, batch_size), desc="Uploading Batches"):
+        end = min(start + batch_size, total)
+        batch = documents[start:end]
+        attempt = 0
+        while attempt < max_retries:
+            try:
+                collection.insert_many(batch, ordered=True)
+                logger.info(f"Uploaded batch {start + 1}-{end} ({len(batch)} docs)")
+                break
+            except pymongo.errors.BulkWriteError as bwe:
+                # BulkWriteError can occur for duplicate _id or other write errors.
+                # Log and continue if some writes succeeded.
+                logger.warning(
+                    f"BulkWriteError on batch {start + 1}-{end}: {bwe.details}")
+                # If ordered=False some docs may have been written; stop retrying this batch.
+                break
+            except (pymongo.errors.AutoReconnect, pymongo.errors.NetworkTimeout) as e:
+                attempt += 1
+                wait = 2 ** attempt
+                logger.warning(
+                    f"Transient error on batch {start + 1}-{end} (attempt {attempt}/{max_retries}): {e}. Retrying in {wait}s..."
+                )
+                time.sleep(wait)
+            except Exception as e:
+                logger.error(f"Unexpected error uploading batch {start + 1}-{end}: {e}", exc_info=True)
+                # For unexpected errors, don't retry indefinitely; re-raise after logging.
+                raise
+
     logger.info("Upload complete")
 
 
@@ -143,11 +156,9 @@ def main() -> None:
     load_env_variables()
 
     DATA_FILE_PATH = os.getenv("DATA_FILE_PATH")
-    EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
     DB_NAME = os.getenv("DB_NAME")
     COLLECTION_NAME = os.getenv("COLLECTION_NAME")
-    NUMERICAL_FEATURES = [
-        "popularity",
+    EMBEDDING_FEATURES = [
         "duration_ms",
         "danceability",
         "energy",
@@ -164,13 +175,12 @@ def main() -> None:
 
     df = get_dataset(DATA_FILE_PATH)
     df = pre_process_data(df)
-    df = engineer_features(df, NUMERICAL_FEATURES)
-    combined_embeddings = embed_features(df, NUMERICAL_FEATURES, EMBEDDING_MODEL_NAME)
+    all_embeddings = df[EMBEDDING_FEATURES].values
 
     client = None
     try:
         client, collection = connect_to_mongo(DB_NAME, COLLECTION_NAME)
-        documents = prepare_documents(df, combined_embeddings)
+        documents = prepare_documents(df, all_embeddings)
         empty_and_populate_collection(collection, documents)
     finally:
         if client:
