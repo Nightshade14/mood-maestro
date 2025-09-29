@@ -78,3 +78,11 @@ class TrackDocument(BaseModel):
 class Entity(BaseModel):
     entity_name: str
     embedding: List[float]
+
+
+class User(BaseModel):
+    name: str
+    genres_embedding: List[float]
+    artists_embedding: List[float]
+    tracks_embedding: List[float]
+    albums_embedding: List[float]
