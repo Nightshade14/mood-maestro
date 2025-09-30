@@ -1,15 +1,14 @@
 import logging
-import pandas as pd
-import pymongo
-from pymongo import MongoClient
-from dotenv import load_dotenv
-from typing import Tuple, List
 import os
-from tqdm import tqdm
 import time
 
-from scripts.models import Entity
+import pandas as pd
+import pymongo
+from dotenv import load_dotenv
+from pymongo import MongoClient
+from tqdm import tqdm
 
+from mood_maestro.core.models import Entity
 
 logger = logging.getLogger("mood_maestro.set_entities_collection")
 
@@ -41,7 +40,7 @@ def pre_process_data(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def get_entities(df: pd.DataFrame, embedding_features: list) -> Tuple[list, list, list]:
+def get_entities(df: pd.DataFrame, embedding_features: list) -> tuple[list, list, list]:
     albums_embeddings = (
         df.groupby("album_name")[embedding_features]
         .mean()
@@ -88,7 +87,7 @@ def get_entities(df: pd.DataFrame, embedding_features: list) -> Tuple[list, list
 
 def connect_to_mongo(
     db_name: str, collection_name: str
-) -> Tuple[MongoClient, pymongo.collection.Collection]:
+) -> tuple[MongoClient, pymongo.collection.Collection]:
     mongo_uri = os.getenv("MONGO_URI")
     if not mongo_uri:
         raise ValueError("MONGO_URI not found in environment variables.")
@@ -100,8 +99,8 @@ def connect_to_mongo(
     return client, collection
 
 
-def prepare_documents(entity_embedding: list) -> List[dict]:
-    documents: List[dict] = []
+def prepare_documents(entity_embedding: list) -> list[dict]:
+    documents: list[dict] = []
     for index in tqdm(
         range(len(entity_embedding)),
         total=len(entity_embedding),

@@ -1,4 +1,3 @@
-from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -19,14 +18,14 @@ class TrackAudioFeatures(BaseModel):
 class TrackDocument(BaseModel):
     id: str = Field(..., alias="_id")
     track_name: str
-    artists: List[str]
-    album_name: Optional[str]
-    track_genre: Optional[str]
+    artists: list[str]
+    album_name: str | None
+    track_genre: str | None
     popularity: float
     duration_ms: float
     explicit: bool
     audio_features: TrackAudioFeatures
-    embedding: List[float]
+    embedding: list[float]
     skip_count: int
     finish_count: int
     liked: bool
@@ -34,7 +33,7 @@ class TrackDocument(BaseModel):
     last_skip_timestamp: int | None
 
     @field_validator("embedding")
-    def embedding_must_not_be_empty(cls, v: List[float]):
+    def embedding_must_not_be_empty(cls, v: list[float]):
         if not v or len(v) == 0:
             raise ValueError("embedding must be a non-empty list of floats")
         return v
@@ -77,12 +76,12 @@ class TrackDocument(BaseModel):
 
 class Entity(BaseModel):
     entity_name: str
-    embedding: List[float]
+    embedding: list[float]
 
 
 class User(BaseModel):
     name: str
-    genres_embedding: List[float]
-    artists_embedding: List[float]
-    tracks_embedding: List[float]
-    albums_embedding: List[float]
+    genres_embedding: list[float]
+    artists_embedding: list[float]
+    tracks_embedding: list[float]
+    albums_embedding: list[float]

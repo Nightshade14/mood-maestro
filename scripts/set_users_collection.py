@@ -1,14 +1,13 @@
 import logging
-import pandas as pd
-import pymongo
-from pymongo import MongoClient
-from dotenv import load_dotenv
-from typing import Tuple
 import os
 import time
 
-from scripts.models import User
+import pandas as pd
+import pymongo
+from dotenv import load_dotenv
+from pymongo import MongoClient
 
+from mood_maestro.core.models import User
 
 logger = logging.getLogger("mood_maestro.set_entities_collection")
 
@@ -42,7 +41,7 @@ def pre_process_data(df: pd.DataFrame) -> pd.DataFrame:
 
 def connect_to_mongo(
     db_name: str, collection_name: str
-) -> Tuple[MongoClient, pymongo.collection.Collection]:
+) -> tuple[MongoClient, pymongo.collection.Collection]:
     mongo_uri = os.getenv("MONGO_URI")
     if not mongo_uri:
         raise ValueError("MONGO_URI not found in environment variables.")
@@ -88,7 +87,7 @@ def empty_and_populate_collection(
     while attempt < max_retries:
         try:
             collection.insert_many([document], ordered=True)
-            logger.info(f"Uploaded document successfully")
+            logger.info("Uploaded document successfully")
             break
         except pymongo.errors.BulkWriteError as bwe:
             # BulkWriteError can occur for duplicate _id or other write errors.
