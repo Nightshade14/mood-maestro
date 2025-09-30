@@ -144,7 +144,7 @@ def calculate_reengagement_scores(tracks: list[dict]) -> list[float]:
         ratio = finish_count / skip_count
         last_skip_ts_ms = track.get("last_skip_timestamp")
         sigmoid_factor = 1.0
-        
+
         if last_skip_ts_ms:
             days_since_last_skip = (current_ts_ms - last_skip_ts_ms) / (
                 1000 * 3600 * 24
