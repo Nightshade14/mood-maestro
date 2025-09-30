@@ -108,6 +108,8 @@ The API will be available at http://127.0.0.1:8000. You can access the interacti
 
 ---
 ## API Usage
+Replace the localhost ip for your cloud IP if running on cloud
+
 To get a recommendation, send a POST request to the /recommendations endpoint.
 
 Example Request (cURL)
