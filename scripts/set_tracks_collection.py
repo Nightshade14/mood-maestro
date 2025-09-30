@@ -1,16 +1,15 @@
-import os
-import pandas as pd
-import numpy as np
-import pymongo
-from pymongo import MongoClient
-from dotenv import load_dotenv
-from tqdm import tqdm
-from typing import List, Tuple
 import logging
+import os
 import time
 
-from scripts.models import TrackAudioFeatures, TrackDocument
+import numpy as np
+import pandas as pd
+import pymongo
+from dotenv import load_dotenv
+from pymongo import MongoClient
+from tqdm import tqdm
 
+from mood_maestro.core.models import TrackAudioFeatures, TrackDocument
 
 # Module logger
 logger = logging.getLogger("mood_maestro.set_tracks_collection")
@@ -45,7 +44,7 @@ def load_env_variables() -> None:
 
 def connect_to_mongo(
     db_name: str, collection_name: str
-) -> Tuple[MongoClient, pymongo.collection.Collection]:
+) -> tuple[MongoClient, pymongo.collection.Collection]:
     mongo_uri = os.getenv("MONGO_URI")
     if not mongo_uri:
         raise ValueError("MONGO_URI not found in environment variables.")
@@ -57,7 +56,7 @@ def connect_to_mongo(
     return client, collection
 
 
-def prepare_documents(df: pd.DataFrame, embeddings: np.ndarray) -> List[dict]:
+def prepare_documents(df: pd.DataFrame, embeddings: np.ndarray) -> list[dict]:
     documents = []
     for index in tqdm(range(len(df)), total=len(df), desc="Preparing Documents"):
         row = df.iloc[index]
