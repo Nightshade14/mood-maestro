@@ -1,92 +1,68 @@
+# src/mood_maestro/agents/tools.py
+import functools
 import json
 import logging
-import os
+import math
+from datetime import datetime, timezone
 
 import numpy as np
-import pymongo
 from openai import AzureOpenAI
-from pymongo import MongoClient
+from pymongo.database import Database
 
-logging.basicConfig(level=logging.INFO)
+# Import the shared clients and collection names from config.py
+from .config import (
+    ALBUMS_COLLECTION,
+    ARTISTS_COLLECTION,
+    GENRES_COLLECTION,
+    TRACKS_COLLECTION,
+    USERS_COLLECTION,
+    AZURE_DEPLOYMENT,
+    get_db_client,
+    get_openai_client,
+)
+
 logger = logging.getLogger(__name__)
 
 
-def connect_to_mongo(
-    collection_env_name: str,
-) -> tuple[MongoClient, pymongo.collection.Collection]:
+def get_entity_embedding(
+    entity_name: str, entity_type: str, db: Database
+) -> list[float]:
     """
-    Connects to MongoDB using environment variables and returns the client and specified collection.
-    Args:
-        collection_env_name (str): The environment variable name for the collection to connect to.
-                                    E.g., "MONGO_TRACKS_COLLECTION", "MONGO_ARTISTS_COLLECTION".
-    Returns:
-        Tuple[MongoClient, pymongo.collection.Collection]: The MongoDB client and the specified collection.
-    """
-
-    mongo_uri = os.getenv("MONGO_URI")
-    db_name = os.getenv("DB_NAME")
-    collection_name = os.getenv(collection_env_name)
-
-    if not mongo_uri:
-        raise ValueError("MONGO_URI not found in environment variables.")
-
-    client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
-    client.admin.command("ping")
-    db = client[db_name]
-    collection = db[collection_name]
-    logger.info("Connected to MongoDB")
-    return client, collection
-
-
-def get_entity_embedding(entity_name: str, entity_type: str) -> list[float]:
-    """
-    Retrieves the embedding vector for a given entity (track, artist, genre, etc.).
+    Retrieves the embedding vector for a given entity ('track', 'artist', 'genre', 'album').
 
     Args:
         entity_name (str): The name of the entity (e.g., "Bohemian Rhapsody", "Queen").
         entity_type (str): The type of the entity ('track', 'artist', 'genre', 'album').
+        db (Database): The MongoDB database client.
 
     Returns:
         list[float]: The embedding vector for the entity. Returns None if not found.
     """
-    # Implementation would involve a direct lookup in the corresponding MongoDB collection.
-    # e.g., db.artists.find_one({"name": entity_name}, {"embedding": 1})
-
-    entity_collection_env_map = {
-        "song": "MONGO_TRACKS_COLLECTION",  # general fallback
-        "music": "MONGO_TRACKS_COLLECTION",  # general fallback
-        "track": "MONGO_TRACKS_COLLECTION",
-        "artist": "MONGO_ARTISTS_COLLECTION",
-        "genre": "MONGO_GENRES_COLLECTION",
-        "album": "MONGO_ALBUMS_COLLECTION",
+    entity_collection_map = {
+        "track": TRACKS_COLLECTION,
+        "song": TRACKS_COLLECTION,  # Alias for track
+        "music": TRACKS_COLLECTION,  # Alias for track
+        "artist": ARTISTS_COLLECTION,
+        "genre": GENRES_COLLECTION,
+        "album": ALBUMS_COLLECTION,
     }
-
-    collection_env_name = entity_collection_env_map.get(entity_type.lower())
-    if not collection_env_name:
+    collection_name = entity_collection_map.get(entity_type.lower())
+    if not collection_name:
         raise ValueError(f"Unsupported entity type: {entity_type}")
 
-    client = None
-    try:
-        client, collection = connect_to_mongo(collection_env_name)
-        result = collection.find_one({"entity_name": entity_name}, {"embedding": 1})
-        return result["embedding"] if result else None
-
-    except Exception as e:
-        logger.error(f"Error retrieving embedding for {entity_name}: {e}")
-        return None
-
-    finally:
-        if client:
-            client.close()
-            logger.info("MongoDB connection closed")
+    result = db[collection_name].find_one(
+        {"entity_name": entity_name}, {"embedding": 1}
+    )
+    return result["embedding"] if result else None
 
 
-def get_user_data(user_id: str) -> dict:
+def get_user_data(user_id: str, db: Database) -> dict:
     """
-    Retrieves key data for a specific user.
+    Retrieves embeddings data for a specific user.
 
     Args:
         user_id (str): The unique identifier for the user.
+        db (Database): The MongoDB database client.
 
     Returns:
         dict: A dictionary containing user information, such as their
@@ -98,54 +74,26 @@ def get_user_data(user_id: str) -> dict:
                         "user_album_embedding": [...]
                         }
     """
-    # Implementation would query the 'Users' collection.
-    pass
-    collection_name = os.getenv("MONGO_USERS_COLLECTION")
-    client = None
-    try:
-        client, collection = connect_to_mongo(collection_name)
-        result = collection.find_one({"_id": user_id})
-        return result if result else {}
-
-    except Exception as e:
-        logger.error(f"Error retrieving user data for {user_id}: {e}")
-        return {}
-    finally:
-        if client:
-            client.close()
-            logger.info("MongoDB connection closed")
+    result = db[USERS_COLLECTION].find_one({"_id": user_id})
+    return result if result else {}
 
 
-def execute_search_pipeline(pipeline: list[dict]) -> list[dict]:
+def execute_search_pipeline(pipeline: list[dict], db: Database) -> list[dict]:
     """
-    Executes a complex MongoDB aggregation pipeline and returns the results.
+    Executes a MongoDB aggregation pipeline.
+
     This function is the primary tool for finding candidate tracks.
 
     Args:
         pipeline (list[dict]): A valid MongoDB aggregation pipeline, typically including
                                $match, $vectorSearch, and $project stages.
+        db (Database): The MongoDB database client.
 
     Returns:
         list[dict]: A list of documents (tracks) matching the pipeline criteria.
                     Each document includes metadata and the vector search similarity_score.
     """
-    # Implementation connects to MongoDB and runs the aggregation.
-
-    with connect_to_mongo("MONGO_TRACKS_COLLECTION") as (client, collection):
-        try:
-            results = list(collection.aggregate(pipeline))
-            return results
-        except Exception as e:
-            logger.error(f"Error executing search pipeline: {e}")
-            return []
-        finally:
-            if client:
-                client.close()
-                logger.info("MongoDB connection closed")
-
-
-import math
-from datetime import datetime, timezone
+    return list(db[TRACKS_COLLECTION].aggregate(pipeline))
 
 
 def calculate_personalization_scores(
@@ -161,14 +109,10 @@ def calculate_personalization_scores(
     Returns:
         list[float]: A list of personalization scores, one for each track.
     """
-    user_vector = np.array(user_track_embedding)
-    track_vectors = np.array(track_embeddings)
-    # Normalize vectors to unit length
-    user_vec_norm = user_vector / np.linalg.norm(user_vector)
-    track_vecs_norm = (
-        track_vectors / np.linalg.norm(track_vectors, axis=1)[:, np.newaxis]
-    )
-    # Compute cosine similarity (dot product of normalized vectors)
+    user_vec = np.array(user_track_embedding)
+    track_vecs = np.array(track_embeddings)
+    user_vec_norm = user_vec / np.linalg.norm(user_vec)
+    track_vecs_norm = track_vecs / np.linalg.norm(track_vecs, axis=1)[:, np.newaxis]
     cosine_similarities = np.dot(track_vecs_norm, user_vec_norm)
     return cosine_similarities.tolist()
 
@@ -188,47 +132,31 @@ def calculate_reengagement_scores(tracks: list[dict]) -> list[float]:
     Returns:
         list[float]: A list of re-engagement scores, one for each track.
     """
-    scores = []
-    k = 0.1  # Controls the steepness of the curve
-    base_midpoint = 15  # The base number of days for the sigmoid midpoint
-
+    scores, k, base_midpoint = [], 0.1, 15
     current_ts_ms = datetime.now(timezone.utc).timestamp() * 1000
 
     for track in tracks:
         skip_count = track.get("skip_count", 0)
-        finish_count = track.get("finish_count", 0)
-
-        # If a track has never been skipped, its re-engagement score is zero.
         if skip_count == 0:
             scores.append(0.0)
             continue
 
+        finish_count = track.get("finish_count", 0)
         ratio = finish_count / skip_count
-
         last_skip_ts_ms = track.get("last_skip_timestamp")
-
-        # If there's no skip timestamp, the time penalty doesn't apply.
         sigmoid_factor = 1.0
 
-        if last_skip_ts_ms is not None:
-            ms_since_last_skip = current_ts_ms - last_skip_ts_ms
-            days_since_last_skip = ms_since_last_skip / (1000 * 3600 * 24)
-
+        if last_skip_ts_ms:
+            days_since_last_skip = (current_ts_ms - last_skip_ts_ms) / (
+                1000 * 3600 * 24
+            )
             cooldown_level = track.get("cooldown_level", 0)
-            # The midpoint shifts based on how often a user skips this track
             x_0 = base_midpoint * (cooldown_level + 1)
-
-            # The sigmoid function ensures the score gently increases as more
-            # time passes since the last skip.
             sigmoid_factor = 1 / (1 + math.exp(-k * (days_since_last_skip - x_0)))
-
         score = ratio * sigmoid_factor
         if track.get("liked", False):
-            like_boost_multiplier = 1.5  # This value should be tuned
-            score *= like_boost_multiplier
-
+            score *= 1.5
         scores.append(score)
-
     return scores
 
 
@@ -260,7 +188,7 @@ def determine_ranking_weights(query: str, client: AzureOpenAI) -> dict[str, floa
 
     try:
         response = client.chat.completions.create(
-            model="YOUR_AZURE_DEPLOYMENT_NAME",
+            model=AZURE_DEPLOYMENT,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Here is the user's query: '{query}'"},
@@ -305,3 +233,40 @@ def rank_tracks(
     return sorted(
         tracks_with_scores, key=lambda x: x.get("ranking_score", 0), reverse=True
     )
+
+
+# --- Create Agent-Ready Tools using functools.partial ---
+# This "bakes in" the shared clients, so the agent doesn't need to manage them.
+shared_db_client = get_db_client()
+get_entity_embedding_tool = functools.partial(get_entity_embedding, db=shared_db_client)
+get_user_data_tool = functools.partial(get_user_data, db=shared_db_client)
+execute_search_pipeline_tool = functools.partial(
+    execute_search_pipeline, db=shared_db_client
+)
+
+shared_azure_client = get_openai_client()
+determine_ranking_weights_tool = functools.partial(
+    determine_ranking_weights, client=shared_azure_client
+)
+
+
+def submit_final_playlist(ranked_tracks: list[dict]) -> list[dict]:
+    """
+    Call this function as the absolute final step to submit the ranked playlist.
+    The input should be the final, sorted list of track dictionaries.
+    """
+    return ranked_tracks
+
+
+# Tools with no external dependencies don't need partial.
+# We list them all here for easy import into the agent manager.
+agent_tool_list = [
+    get_entity_embedding_tool,
+    get_user_data_tool,
+    execute_search_pipeline_tool,
+    calculate_personalization_scores,
+    calculate_reengagement_scores,
+    determine_ranking_weights_tool,
+    rank_tracks,
+    submit_final_playlist,
+]

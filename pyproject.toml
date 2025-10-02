@@ -1,38 +1,30 @@
 [project]
 name = "mood-maestro"
 version = "0.1.0"
-description = "Personalized and real-time generative playlist curation with AI Agents"
+description = "Add your description here"
 readme = "README.md"
-authors = [
-    { name = "Satyam Chatrola", email = "sc10247@nyu.edu" }
-]
 requires-python = ">=3.12"
 dependencies = [
     "autogen[azure]>=0.9.9",
     "fastapi[all]>=0.117.1",
-    "ipykernel>=6.30.1",
     "openai>=1.109.1",
-    "pandas>=2.3.2",
     "pymongo>=4.15.1",
-    "ruff>=0.13.2",
-    "sentence-transformers>=5.1.1",
 ]
 
-[project.scripts]
-mood-maestro = "mood_maestro.app.main:main"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[dependency-groups]
+dev = [
+    "ipykernel>=6.30.1",
+    "pandas>=2.3.3",
+    "pytest>=8.4.2",
+]
+lint = [
+    "pre-commit>=4.3.0",
+    "ruff>=0.13.2",
+]
 
 [tool.ruff]
-# The maximum line length for the formatter and linter.
-# Black's default is 88, which is a very safe and reasonable choice.
-line-length = 88
-# Set the target Python version to ensure compatibility with your code.
-target-version = "py310"
+target-version = "py312"
 
-# Files and directories to exclude from all Ruff checks.
 exclude = [
     ".git",
     "__pycache__",
@@ -41,39 +33,3 @@ exclude = [
     "build",
     "dist",
 ]
-
-[tool.ruff.lint]
-# Select popular rulesets for a comprehensive but readable style.
-select = [
-    # Pyflakes (F): Catches common errors like unused imports.
-    "F",
-    # Pycodestyle (E, W): Enforces PEP 8 style guidelines.
-    "E",
-    "W",
-    # isort (I): Automatically sorts imports for consistency.
-    "I",
-    # pyupgrade (UP): Suggests more modern Python syntax.
-    "UP",
-    # flake8-bugbear (B): Catches potential bugs and design problems.
-    "B",
-    # flake8-simplify (SIM): Suggests code simplifications.
-    "SIM",
-    # flake8-comprehensions (C4): Enforces good comprehension style.
-    "C4",
-    # pep8-naming (N): Enforces standard naming conventions.
-    "N",
-    # Ruff-specific rules (RUF): Fixable style rules developed by Ruff.
-    "RUF",
-]
-
-[tool.ruff.format]
-# Keep the default behavior, which is Black-compatible.
-# "double" for double quotes, "single" for single quotes.
-quote-style = "double"
-# Use spaces for indentation, like Black.
-indent-style = "space"
-# This setting is necessary to ensure isort-like import sorting is applied.
-# By default, the linter fixes `I` rules.
-# While the `format` tool does not sort imports, the `check --fix` command does.
-# Set it to true to run experimental formatting rules that may be released later.
-preview = false

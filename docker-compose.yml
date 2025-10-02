@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # FastAPI Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mood-maestro-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # MongoDB Atlas connection (from .env file)
+      MONGO_URI: ${MONGO_URI}
+      DB_NAME: ${DB_NAME:-mood_maestro_db}
+      
+      # Collections
+      MONGO_TRACKS_COLLECTION: ${MONGO_TRACKS_COLLECTION:-tracks}
+      MONGO_GENRES_COLLECTION: ${MONGO_GENRES_COLLECTION:-genres}
+      MONGO_ARTISTS_COLLECTION: ${MONGO_ARTISTS_COLLECTION:-artists}
+      MONGO_ALBUMS_COLLECTION: ${MONGO_ALBUMS_COLLECTION:-albums}
+      MONGO_USERS_COLLECTION: ${MONGO_USERS_COLLECTION:-users}
+      
+      # Features and data
+      EMBEDDING_FEATURES: ${EMBEDDING_FEATURES:-"duration_ms,danceability,energy,key,loudness,mode,speechiness,acousticness,instrumentalness,liveness,valence,tempo"}
+      DATA_FILE_PATH: ${DATA_FILE_PATH:-"dataset/final_full_dataset.csv"}
+      
+      # Azure OpenAI (from .env file)
+      AZURE_DEPLOYMENT: ${AZURE_DEPLOYMENT}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_API_VERSION: ${AZURE_API_VERSION}
+    volumes:
+      - ./dataset:/app/dataset:ro  # Mount dataset directory if it exists
+      - ./logs:/app/logs           # Mount logs directory for persistence
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  # Removed mongodb_data volume as using MongoDB Atlas
+  logs:
+    driver: local
