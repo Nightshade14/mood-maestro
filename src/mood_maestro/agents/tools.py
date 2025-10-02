@@ -19,7 +19,6 @@ from .config import (
     AZURE_DEPLOYMENT,
     get_db_client,
     get_openai_client,
-
 )
 
 logger = logging.getLogger(__name__)
@@ -257,8 +256,6 @@ def submit_final_playlist(ranked_tracks: list[dict]) -> list[dict]:
     The input should be the final, sorted list of track dictionaries.
     """
     return ranked_tracks
-
-
 
 
 # Tools with no external dependencies don't need partial.

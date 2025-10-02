@@ -5,6 +5,12 @@ from . import schemas, services
 app = FastAPI(title="Mood Maestro API")
 
 
+@app.get("/health")
+def health_check():
+    """Health check endpoint for Docker containers."""
+    return {"status": "healthy", "service": "mood-maestro"}
+
+
 @app.post("/recommendations", response_model=schemas.RecommendationResponse)
 def create_recommendations(request: schemas.RecommendationRequest):
     """

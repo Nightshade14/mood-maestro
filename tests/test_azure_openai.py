@@ -8,6 +8,7 @@ client = get_openai_client()
 # Note: I used AZURE_DEPLOYMENT from config.py, but you can also get it from LLM_CONFIG
 deployment_name = LLM_CONFIG["config_list"][0]["model"]
 
+
 # Send a test prompt
 def test_openai_connection():
     """
@@ -18,13 +19,16 @@ def test_openai_connection():
             model=deployment_name,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "What is the primary difference between Azure OpenAI and OpenAI?"}
-            ]
+                {
+                    "role": "user",
+                    "content": "What is the primary difference between Azure OpenAI and OpenAI?",
+                },
+            ],
         )
-        
+
         print("\nResponse from Azure OpenAI:")
         print(response.choices[0].message.content)
-        
+
         # Add an assertion for a real test
         assert response.choices[0].message.content is not None
         assert len(response.choices[0].message.content) > 0
