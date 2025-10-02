@@ -90,5 +90,3 @@ temp.ipynb
 # Large datasets (should be mounted as volumes)
 dataset/
 data/
-
-uv.lock

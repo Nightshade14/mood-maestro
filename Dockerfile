@@ -22,7 +22,7 @@ RUN pip install uv
 COPY pyproject.toml uv.lock ./
 
 # Install Python dependencies
-RUN uv pip install --system --no-cache -r pyproject.toml
+RUN uv sync --locked --no-group dev --no-group lint
 
 # Copy source code
 COPY src/ ./src/
