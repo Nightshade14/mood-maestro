@@ -24,6 +24,51 @@ from .config import (
 logger = logging.getLogger(__name__)
 
 
+def search_track_by_name_and_artist(
+    db: Database, track_name: str, artist_name: str = None
+) -> dict:
+    """
+    Helper function to search for tracks with flexible matching.
+
+    Args:
+        db: MongoDB database client
+        track_name: Name of the track
+        artist_name: Name of the artist (optional)
+
+    Returns:
+        dict: Track document if found, None otherwise
+    """
+    collection = db[TRACKS_COLLECTION]
+
+    if artist_name:
+        # Try exact match first
+        query = {
+            "track_name": {"$regex": f"^{track_name}$", "$options": "i"},
+            "artists": {"$regex": f"^{artist_name}$", "$options": "i"},
+        }
+        result = collection.find_one(
+            query, {"embedding": 1, "track_name": 1, "artists": 1}
+        )
+        if result:
+            return result
+
+        # Try partial match on artist name
+        query = {
+            "track_name": {"$regex": f"^{track_name}$", "$options": "i"},
+            "artists": {"$regex": artist_name, "$options": "i"},
+        }
+        result = collection.find_one(
+            query, {"embedding": 1, "track_name": 1, "artists": 1}
+        )
+        if result:
+            return result
+
+    # Try just track name
+    query = {"track_name": {"$regex": f"^{track_name}$", "$options": "i"}}
+    result = collection.find_one(query, {"embedding": 1, "track_name": 1, "artists": 1})
+    return result
+
+
 def get_entity_embedding(
     entity_name: str, entity_type: str, db: Database
 ) -> list[float]:
@@ -31,7 +76,7 @@ def get_entity_embedding(
     Retrieves the embedding vector for a given entity ('track', 'artist', 'genre', 'album').
 
     Args:
-        entity_name (str): The name of the entity (e.g., "Bohemian Rhapsody", "Queen").
+        entity_name (str): The name of the entity (e.g., "Bohemian Rhapsody", "Queen", "Thunder Imagine Dragons").
         entity_type (str): The type of the entity ('track', 'artist', 'genre', 'album').
         db (Database): The MongoDB database client.
 
@@ -50,10 +95,45 @@ def get_entity_embedding(
     if not collection_name:
         raise ValueError(f"Unsupported entity type: {entity_type}")
 
-    result = db[collection_name].find_one(
-        {"entity_name": entity_name}, {"embedding": 1}
-    )
-    return result["embedding"] if result else None
+    # Handle tracks differently since they have different field structure
+    if entity_type.lower() in ["track", "song", "music"]:
+        logger.info(f"Searching for track: '{entity_name}'")
+
+        # Try to parse "track_name artist_name" format
+        parts = entity_name.strip().split()
+        if len(parts) >= 2:
+            # Try different combinations of track name and artist
+            for i in range(1, len(parts)):
+                track_name = " ".join(parts[:i])
+                artist_name = " ".join(parts[i:])
+
+                logger.info(f"Trying track_name='{track_name}', artist='{artist_name}'")
+
+                result = search_track_by_name_and_artist(db, track_name, artist_name)
+                if result:
+                    logger.info(
+                        f"Found track '{result.get('track_name')}' by {result.get('artists')} with embedding of length {len(result['embedding'])}"
+                    )
+                    return result["embedding"]
+
+        # If no artist provided or not found, try just the track name
+        logger.info(f"Trying track_name only: '{entity_name}'")
+        result = search_track_by_name_and_artist(db, entity_name)
+
+        if result:
+            logger.info(
+                f"Found track '{result.get('track_name')}' by {result.get('artists')} with embedding of length {len(result['embedding'])}"
+            )
+            return result["embedding"]
+        else:
+            logger.warning(f"No track found for '{entity_name}'")
+            return None
+    else:
+        # For other entities (artist, genre, album), use entity_name field
+        result = db[collection_name].find_one(
+            {"entity_name": entity_name}, {"embedding": 1}
+        )
+        return result["embedding"] if result else None
 
 
 def get_user_data(user_id: str, db: Database) -> dict:
