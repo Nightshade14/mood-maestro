@@ -1,5 +1,6 @@
 # src/mood_maestro/agents/tools.py
 import functools
+import re
 import json
 import logging
 import math
@@ -8,6 +9,8 @@ from datetime import datetime, timezone
 import numpy as np
 from openai import AzureOpenAI
 from pymongo.database import Database
+from pymongo import DESCENDING
+from bson.objectid import ObjectId
 
 # Import the shared clients and collection names from config.py
 from .config import (
@@ -30,6 +33,10 @@ def search_track_by_name_and_artist(
     """
     Helper function to search for tracks with flexible matching.
 
+    If the user specifies a track by a certain artist, then we find that track with both: track name and artist name.
+    If the user only specifies a track name, then we find that track with just the track name. But there might be multiple tracks with the same name.
+    So, we find the track with the highest popularity score. This score is present in the track document for each track. You can write a boosted search query to find the track with the highest popularity score.
+
     Args:
         db: MongoDB database client
         track_name: Name of the track
@@ -40,33 +47,50 @@ def search_track_by_name_and_artist(
     """
     collection = db[TRACKS_COLLECTION]
 
+    # Build a safe, case-insensitive exact-match regex for the track name
+    tn_regex = {"$regex": f"^{re.escape(track_name)}$", "$options": "i"}
+
     if artist_name:
-        # Try exact match first
-        query = {
-            "track_name": {"$regex": f"^{track_name}$", "$options": "i"},
-            "artists": {"$regex": f"^{artist_name}$", "$options": "i"},
-        }
-        result = collection.find_one(
-            query, {"embedding": 1, "track_name": 1, "artists": 1}
+        # Prefer exact artist name match (case-insensitive), then fall back to partial
+        an_exact_regex = {"$regex": f"^{re.escape(artist_name)}$", "$options": "i"}
+        an_partial_regex = {"$regex": re.escape(artist_name), "$options": "i"}
+
+        # 1) Exact track + exact artist, sorted by popularity desc
+        query = {"track_name": tn_regex, "artists": an_exact_regex}
+        cursor = (
+            collection.find(
+                query, {"embedding": 1, "track_name": 1, "artists": 1, "popularity": 1}
+            )
+            .sort([("popularity", DESCENDING)])
+            .limit(1)
         )
+        result = next(cursor, None)
         if result:
             return result
 
-        # Try partial match on artist name
-        query = {
-            "track_name": {"$regex": f"^{track_name}$", "$options": "i"},
-            "artists": {"$regex": artist_name, "$options": "i"},
-        }
-        result = collection.find_one(
-            query, {"embedding": 1, "track_name": 1, "artists": 1}
+        # 2) Exact track + partial artist, sorted by popularity desc
+        query = {"track_name": tn_regex, "artists": an_partial_regex}
+        cursor = (
+            collection.find(
+                query, {"embedding": 1, "track_name": 1, "artists": 1, "popularity": 1}
+            )
+            .sort([("popularity", DESCENDING)])
+            .limit(1)
         )
+        result = next(cursor, None)
         if result:
             return result
 
-    # Try just track name
-    query = {"track_name": {"$regex": f"^{track_name}$", "$options": "i"}}
-    result = collection.find_one(query, {"embedding": 1, "track_name": 1, "artists": 1})
-    return result
+    # 3) Track-only: pick the most popular exact-name match
+    query = {"track_name": tn_regex}
+    cursor = (
+        collection.find(
+            query, {"embedding": 1, "track_name": 1, "artists": 1, "popularity": 1}
+        )
+        .sort([("popularity", DESCENDING)])
+        .limit(1)
+    )
+    return next(cursor, None)
 
 
 def get_entity_embedding(
@@ -148,30 +172,71 @@ def get_user_data(user_id: str, db: Database) -> dict:
         dict: A dictionary containing user information, such as their
               composite track embedding and listening history for score calculation.
               Example: {
-                        "user_track_embedding": [...],
-                       "user_genre_embedding": [...],
-                        "user_artist_embedding": [...],
-                        "user_album_embedding": [...]
+                        "name": str,
+                        "tracks_embedding": list[float],
+                        "genres_embedding": list[float],
+                        "artists_embedding": list[float],
+                        "albums_embedding": list[float]
                         }
+            Note: These are the exact field names used in the database.
     """
-    result = db[USERS_COLLECTION].find_one({"_id": user_id})
-    return result if result else {}
+    doc = db[USERS_COLLECTION].find_one({"_id": ObjectId(user_id)}) or {}
+
+    # Standardized field names per docstring
+    name = doc.get("name") or "Anonymous User"
+
+    # Accept legacy keys and map to new standardized keys
+    tracks_embedding = doc.get("tracks_embedding") or []
+    genres_embedding = doc.get("genres_embedding") or []
+    artists_embedding = doc.get("artists_embedding") or []
+    albums_embedding = doc.get("albums_embedding") or []
+
+    response = {
+        "name": name,
+        "tracks_embedding": tracks_embedding,
+        "genres_embedding": genres_embedding,
+        "artists_embedding": artists_embedding,
+        "albums_embedding": albums_embedding,
+    }
+
+    return response
 
 
 def execute_search_pipeline(pipeline: list[dict], db: Database) -> list[dict]:
     """
-    Executes a MongoDB aggregation pipeline.
+        Executes a MongoDB aggregation pipeline.
 
-    This function is the primary tool for finding candidate tracks.
+        This function is the primary tool for finding candidate tracks.
 
-    Args:
-        pipeline (list[dict]): A valid MongoDB aggregation pipeline, typically including
-                               $match, $vectorSearch, and $project stages.
-        db (Database): The MongoDB database client.
+        Here are some of the details needed for querying the vector index:
+        - queryVector: The vector to search for.
+        - path: The field to search in. = "embedding"
+        - limit: The number of results to return. = 50
+        - numCandidates: The number of candidates to consider. = 100
+        - index: The name of the vector index to use. = "vector_index"
 
-    Returns:
-        list[dict]: A list of documents (tracks) matching the pipeline criteria.
-                    Each document includes metadata and the vector search similarity_score.
+        Here is a sample aggregation pipeline from mongodb documentation:
+
+        db.tracks.aggregate([
+      {
+        "$vectorSearch": {
+          "index": "vector_index",
+          "path": "embedding",
+          "queryVector": [<array-of-numbers>],
+          "numCandidates": <number-of-candidates>,
+          "limit": <number-of-results>
+        }
+      }
+    ])
+
+        Args:
+            pipeline (list[dict]): A valid MongoDB aggregation pipeline, typically including
+                                   $match, $vectorSearch, and $project stages.
+            db (Database): The MongoDB database client.
+
+        Returns:
+            list[dict]: A list of documents (tracks) matching the pipeline criteria.
+                        Each document includes metadata and the vector search similarity_score.
     """
     return list(db[TRACKS_COLLECTION].aggregate(pipeline))
 
@@ -315,21 +380,6 @@ def rank_tracks(
     )
 
 
-# --- Create Agent-Ready Tools using functools.partial ---
-# This "bakes in" the shared clients, so the agent doesn't need to manage them.
-shared_db_client = get_db_client()
-get_entity_embedding_tool = functools.partial(get_entity_embedding, db=shared_db_client)
-get_user_data_tool = functools.partial(get_user_data, db=shared_db_client)
-execute_search_pipeline_tool = functools.partial(
-    execute_search_pipeline, db=shared_db_client
-)
-
-shared_azure_client = get_openai_client()
-determine_ranking_weights_tool = functools.partial(
-    determine_ranking_weights, client=shared_azure_client
-)
-
-
 def submit_final_playlist(ranked_tracks: list[dict]) -> list[dict]:
     """
     Call this function as the absolute final step to submit the ranked playlist.
@@ -338,8 +388,25 @@ def submit_final_playlist(ranked_tracks: list[dict]) -> list[dict]:
     return ranked_tracks
 
 
-# Tools with no external dependencies don't need partial.
-# We list them all here for easy import into the agent manager.
+# --- Create Agent-Ready Tools using functools.partial ---
+# This "bakes in" the shared clients, so the agent doesn't need to manage them.
+shared_db_client = get_db_client()
+
+get_entity_embedding_tool = functools.partial(get_entity_embedding, db=shared_db_client)
+get_user_data_tool = functools.partial(get_user_data, db=shared_db_client)
+execute_search_pipeline_tool = functools.partial(
+    execute_search_pipeline, db=shared_db_client
+)
+search_track_by_name_and_artist_tool = functools.partial(
+    search_track_by_name_and_artist, db=shared_db_client
+)
+
+shared_azure_client = get_openai_client()
+
+determine_ranking_weights_tool = functools.partial(
+    determine_ranking_weights, client=shared_azure_client
+)
+
 agent_tool_list = [
     get_entity_embedding_tool,
     get_user_data_tool,
@@ -349,4 +416,5 @@ agent_tool_list = [
     determine_ranking_weights_tool,
     rank_tracks,
     submit_final_playlist,
+    search_track_by_name_and_artist_tool,
 ]

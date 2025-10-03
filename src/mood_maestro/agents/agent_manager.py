@@ -20,7 +20,8 @@ def run_recommendation_flow(query: str, user_id: str) -> list[dict]:
         name="PlannerAgent",
         system_message=f"""You are a master planner for a music recommendation system.
         Your job is to take a user's request and create a clear, step-by-step plan.
-        Do NOT implement the steps yourself - delegate to the MusicQueryAgent.
+        If you need to execute code, use the CodeExecutorAgent.
+        Do NOT implement the steps yourself - delegate to the MusicQueryAgent. If you need to execute code, use the CodeExecutorAgent.
         
         The user you are serving has the ID: {user_id}
         
@@ -35,6 +36,12 @@ def run_recommendation_flow(query: str, user_id: str) -> list[dict]:
         - submit_final_playlist(ranked_tracks): Submit the final playlist (MUST be called last)
         
         Create a plan that uses these tools appropriately. The final step MUST call submit_final_playlist.
+
+        Whenever you try to find any entity (track, artist, genre, album), the idea is to use pre-filtering before using semantic search when finding data from the database. We are using MongoDB for the database, so you can use the execute_search_pipeline tool to run MongoDB aggregation queries.
+        After we get the results from the database, we can only calculate manual scores for each track. Those scores are personalization score and re-engagement score. We also have 2 other scores: semantic score that would be the match quality that mongodb used for smeantic score and the alst is popularity score which is already a feature present with the track data for every track.
+        The tracks are now ready to be ranked. We use weights for each of the score based on the user query. For e.g., If a user wants trending songs, we give more weight to populairty and personalization score.
+        This final score determines the final ranking of the tracks.
+
         """,
         llm_config=LLM_CONFIG,
     )
@@ -55,7 +62,10 @@ def run_recommendation_flow(query: str, user_id: str) -> list[dict]:
         name="CodeExecutorAgent",
         human_input_mode="NEVER",
         max_consecutive_auto_reply=10,
-        code_execution_config=False,  # Disable code execution, use function calling instead
+        code_execution_config={
+            "work_dir": "/app/coding",
+            "use_docker": True,
+        },
         system_message="""You are the function executor. Execute the function calls requested by the
         MusicQueryAgent and report back the results. The final ranked list of tracks
         is the ultimate result of the entire process.""",
@@ -93,11 +103,19 @@ def run_recommendation_flow(query: str, user_id: str) -> list[dict]:
                     if name not in bound_params
                 ]
 
-                # Create a new signature with only the remaining parameters
-                new_sig = orig_sig.replace(parameters=remaining_params)
+                # Special-case: enforce using the current request's user_id for get_user_data
+                if orig_func.__name__ == "get_user_data":
+                    # Expose no parameters to the LLM; always use captured user_id
+                    new_sig = orig_sig.replace(parameters=[])
+                else:
+                    # Create a new signature with only the remaining parameters
+                    new_sig = orig_sig.replace(parameters=remaining_params)
 
                 # Create the wrapper function
                 def wrapper(*args, **kwargs):
+                    if orig_func.__name__ == "get_user_data":
+                        # Ignore any passed args; always use the current user's ID
+                        return partial_func(user_id=user_id)
                     return partial_func(*args, **kwargs)
 
                 # Set the proper attributes
